@@ -1,200 +1,307 @@
-# 📊 ML-Based Intraday Trading Strategy (Streamlit)
 
-A professional, end-to-end Machine Learning–powered intraday trading system built with **Python**, **Streamlit**, and **scikit-learn**.
-This project transforms raw OHLCV data into **signals, trades, performance analytics, and interactive visual dashboards** — providing a real trading-research experience suitable for quant, data science, and algorithmic trading roles.
+# 📊 Quantitative ML Trading System (Intraday)
+
+**End-to-end Machine Learning Pipeline · Technical Indicators · Backtesting Engine · Streamlit UI**
+
+This repository implements a **production-style intraday trading research framework**, combining technical indicators, supervised ML models, signal generation logic, and a lightweight backtesting engine. The objective is to provide a **real-world quant research workflow**, suitable for interviews, portfolio showcases, and professional applications in algorithmic trading, data science, and financial engineering.
+
+The system automates the complete pipeline:
+**Data → Feature Engineering → Labeling → ML Modeling → Signal Generation → Backtesting → Visualization.**
 
 ---
 
-## 🚀 Features
+## 🔥 Key Highlights
 
-### **1. Data Handling & Validation**
+### ✔ Full ML Pipeline for Market Supervision
 
-* Upload any intraday OHLCV CSV
-* Auto-detects datetime column
-* Cleans, sorts, validates required fields
-* Filters duplicate timestamps
+* 40+ engineered technical features
+* Multiple labeling schemes (threshold, tercile, quintile)
+* Cross-validated model training
+* Gaussian Naive Bayes, Logistic Regression, RF, GBM
+* Feature importance for interpretability
 
-### **2. Technical Indicator Engine**
+### ✔ Realistic Signal Logic
 
-Generates 40+ indicators, including:
+* ML probability outputs → signal scoring
+* Trend confirmations (EMA stack, ADX, VWAP, MACD)
+* Volume/momentum filters
+* Strong/Moderate Long/Short signals
 
-* EMA9, EMA20, EMA50, EMA200
-* VWAP, ATR, ATR%
-* Bollinger Bands (width, position)
-* RSI, MACD, Stochastic, ROC
-* OBV, volume trends, volume ratios
-* Candle structure (body, shadows, ranges)
-* Support/resistance distances
-* ADX & trend strength
+### ✔ Professional Backtesting Engine
 
-### **3. Labeling Methods**
+* ATR-based SL/TP
+* Dynamic position sizing
+* Trailing ATR stop (optional)
+* Trade logs, PnL tables, equity curve
+* Full performance analytics (Sharpe, Sortino, Calmar, PF, WR)
 
-Supports 3 market-supervised labeling methods:
+### ✔ Streamlit Frontend
 
-* Threshold returns
-* Tercile labeling
-* Quintile labeling
-  Configurable prediction horizon and thresholds.
+* Upload any OHLCV CSV
+* Full workflow automation
+* Signal visualization
+* Equity curve, drawdown, distribution plots
+* Downloadable reports
 
-### **4. Machine Learning Models**
+---
 
-Trains and compares:
+# 🧩 System Architecture
+
+```
+            ┌────────────────┐
+            │ Raw OHLCV Data │
+            └───────┬────────┘
+                    │
+            ┌───────▼────────┐
+            │ Data Cleaner    │
+            │ • Sort          │
+            │ • Validate      │
+            │ • Format        │
+            └───────┬────────┘
+                    │
+            ┌───────▼────────┐
+            │ Feature Engine  │
+            │ • 40+ Indicators│
+            │ • Candle Stats  │
+            │ • Trend/Volume  │
+            └───────┬────────┘
+                    │
+            ┌───────▼────────┐
+            │ Label Generator │
+            │ • Threshold     │
+            │ • Tercile       │
+            │ • Quintile      │
+            └───────┬────────┘
+                    │
+            ┌───────▼────────┐
+            │ ML Models       │
+            │ • GNB, LR, RF   │
+            │ • GBM           │
+            │ • Evaluation    │
+            └───────┬────────┘
+                    │
+            ┌───────▼────────┐
+            │ Signal Engine   │
+            │ • ML + Trend    │
+            │ • Vol Filters   │
+            └───────┬────────┘
+                    │
+            ┌───────▼────────┐
+            │ Backtester      │
+            │ • SL/TP/ATR     │
+            │ • PnL & Equity  │
+            └───────┬────────┘
+                    │
+            ┌───────▼────────┐
+            │ Streamlit UI    │
+            └─────────────────┘
+```
+
+---
+
+# 📁 Folder Structure (Professional Layout)
+
+```
+Quantitative-ML-Trading-System/
+│
+├── data/
+│   ├── raw/                 # Raw OHLCV, JSON, CSV
+│   └── processed/           # Cleaned data (optional)
+│
+├── models/
+│   ├── gnb_model.pkl
+│   ├── gnb_scaler.pkl
+│   └── feature_cols.pkl
+│
+├── src/
+│   ├── app.py               # Streamlit interface
+│   └── QuantStrategy_ML_Model.py
+│
+├── notebooks/
+│   └── json_to_csv_converter.ipynb
+│
+├── requirements.txt
+├── README.md
+└── .gitignore
+```
+
+---
+
+# ⚙️ Installation & Setup
+
+## 1️⃣ Clone the Repository
+
+```bash
+git clone https://github.com/yourusername/Quantitative-ML-Trading-System.git
+cd Quantitative-ML-Trading-System
+```
+
+## 2️⃣ Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+## 3️⃣ Launch Streamlit App
+
+```bash
+streamlit run src/app.py
+```
+
+---
+
+# 📄 Required Input Data Format
+
+Your uploaded CSV must contain:
+
+| Column                  | Description   |
+| ----------------------- | ------------- |
+| datetime / datetime_ist | Timestamp     |
+| open                    | Opening price |
+| high                    | High price    |
+| low                     | Low price     |
+| close                   | Closing price |
+| volume                  | Volume        |
+
+---
+
+# 🔍 Pipeline Explained (Step-by-Step)
+
+### **1. Data Ingestion & Validation**
+
+* Detects datetime column automatically
+* Removes duplicates
+* Ensures correctly sorted intraday index
+* Validates required columns
+
+### **2. Technical Feature Engineering**
+
+40+ features including:
+
+* EMA9/20/50/200
+* ATR, ATR%
+* MACD, RSI, Stochastic
+* OBV, volume trends
+* Bollinger Bands metrics
+* Candle body/wicks/ranges
+* Trend strength (ADX)
+* Distance to support & resistance
+
+### **3. Label Generation**
+
+Supports multiple ML labeling schemes:
+
+| Label Method     | Use-case              |
+| ---------------- | --------------------- |
+| Threshold Return | Simple up/down        |
+| Tercile          | Balanced classes      |
+| Quintile         | Finer prediction bins |
+
+### **4. Machine Learning Modeling**
+
+Models trained & compared:
 
 * Gaussian Naive Bayes
 * Logistic Regression
 * Random Forest
 * Gradient Boosting
 
-Shows accuracy, AUC, classification reports, and confusion matrices.
+Model outputs include:
 
-### **5. Advanced Signal Generation**
+* Accuracy
+* Precision, Recall, F1
+* AUC
+* Confusion matrix
+* Cross-validation scores
 
-Combines:
+### **5. Signal Generation**
 
-* ML predictions
-* Trend confirmation
-* Momentum/volume filters
-* Optional regime filters (trending vs ranging)
+Signals combine predicted class + trend + volume:
 
-Generates:
+* **Strong Long**
+* **Moderate Long**
+* **Strong Short**
+* **Moderate Short**
 
-* Strong Long / Moderate Long
-* Strong Short / Moderate Short
-* Confidence-based signals
+### **6. Backtesting Framework**
 
-### **6. Professional Backtesting Engine**
-
-* ATR-based SL & TP
-* Dynamic position sizing (risk % per trade)
-* Optional ATR trailing stop
-* Tracks PnL, PnL%, equity, shares
-* Saves complete trade logs
-
-### **7. Portfolio & Performance Analytics**
-
-Automatically computes:
-
-* Total return & %
-* Win rate
-* Sharpe ratio
-* Sortino ratio
-* Max drawdown
-* Calmar ratio
-* Expectancy
-* Profit factor
-* Max loss streak
-
-### **8. Interactive Visualizations**
-
-Includes:
-
+* ATR-based stop loss
+* Dynamic SL/TP
+* Trailing ATR (optional)
+* Position sizing
+* Trade logging
+* Performance statistics
 * Equity curve
-* Drawdown chart
-* Return distribution
-* Win/Loss pie
+
+### **7. Visualization Layer**
+
+* Price with buy/sell markers
+* Equity curve
+* Drawdown plot
 * Monthly PnL heatmap
-* Cumulative PnL by trade
-* Signal chart with buys/sells
-* ML confidence plot
-* Volume analysis
-* Feature importance (for tree models)
-
-### **9. Downloads**
-
-* Trade log CSV
-* Backtest result CSV
+* Win/loss pie
+* Feature importance
+* ML probability charts
 
 ---
 
-## 🗂 Project Structure
+# 📈 Performance Metrics Calculated
 
-```
-project/
-│── app.py                      # Main Streamlit application
-│── Quant Stratergy ML Model.py # Main Streamlit application
-│── requirements.txt            # Dependencies
-│── sample_data.csv             # Example OHLCV dataset (optional)
-│── README.md                   # Documentation
-```
-
----
-
-## 🛠 Installation
-
-### **1. Clone the repo**
-
-```bash
-git clone https://github.com/yourname/yourrepo.git
-cd yourrepo
-```
-
-### **2. Install dependencies**
-
-```bash
-pip install -r requirements.txt
-```
-
-### **3. Run Streamlit app**
-
-```bash
-streamlit run app.py
-```
+| Metric        | Purpose                    |
+| ------------- | -------------------------- |
+| Sharpe Ratio  | Risk-adjusted return       |
+| Sortino Ratio | Downside-risk efficiency   |
+| Max Drawdown  | Largest loss streak        |
+| Calmar Ratio  | Return vs drawdown         |
+| Profit Factor | Gross win / gross loss     |
+| Expectancy    | Avg return per trade       |
+| Win Rate      | Accuracy of trading system |
 
 ---
 
-## 📁 Required CSV Format
+# 🎯 Intended Use-Cases
 
-Your dataset must include:
-
-| Column                  | Description |
-| ----------------------- | ----------- |
-| datetime / datetime_ist | Timestamp   |
-| open                    | Open price  |
-| high                    | High price  |
-| low                     | Low price   |
-| close                   | Close price |
-| volume                  | Volume      |
+* Quant research prototyping
+* ML strategy development
+* Streamlit dashboarding for markets
+* Backtesting & trade analysis
+* Educational demonstration of ML in trading
 
 ---
 
-## 🧠 How It Works (Pipeline)
+# 🧪 Sample Workflow
 
-1. **Upload OHLCV data**
-2. **Clean + validate data**
-3. **Generate 40+ technical indicators**
-4. **Label the data (up/down)**
-5. **Build ML dataset**
-6. **Train all ML models**
-7. **Choose best model**
-8. **Generate trading signals**
-9. **Run backtest**
-10. **Analyze results with visual dashboards**
-11. **Download logs for deeper analysis**
+1. Upload intraday OHLCV CSV
+2. Select labeling method + model
+3. Generate features
+4. Train ML model
+5. View metrics
+6. Run backtest
+7. Analyze trades
+8. Export logs
 
 ---
 
-## 🎯 Use Cases
+# 📝 Roadmap & Future Enhancements
 
-* Quantitative trading research
-* ML-based signal development
-* Strategy prototyping
-* Backtesting framework
-* Trading analytics dashboard
-* Educational resource for ML + finance
-
----
-
-## 📌 Notes
-
-This project is for **research and educational purposes only**.
-It does *not* predict the future or guarantee profit.
+* XGBoost & CatBoost model support
+* Portfolio-level backtesting
+* Market regime detection using HMM
+* Auto feature-selection (Boruta / SHAP)
+* Live data integration
+* API-based execution (AngelOne, Fyers, IBKR)
 
 ---
 
-## 🤝 Contributing
+# ⚠️ Disclaimer
 
-Pull requests and issue reports are welcome.
-Feel free to extend the ML models, add indicators, or improve visualization.
+This project is strictly for **research and educational** purposes.
+It is **not** intended for live trading or financial advice.
 
 ---
+
+# 🤝 Contributing
+
+Contributions are welcome.
+Feel free to open issues or submit PRs for improvements.
 
