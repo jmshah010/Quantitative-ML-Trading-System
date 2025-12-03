@@ -776,11 +776,11 @@ def plot_comprehensive_dashboard(
         color="#2E86AB",
     )
     ax1.set_title("Equity Curve", fontsize=14, fontweight="bold")
-    ax1.set_ylabel("Capital ($)", fontsize=11)
+    ax1.set_ylabel("Capital (₹)", fontsize=11)
     ax1.legend(loc="upper left")
     ax1.grid(True, alpha=0.3)
     ax1.yaxis.set_major_formatter(
-        plt.FuncFormatter(lambda x, p: f"${x:,.0f}")
+        plt.FuncFormatter(lambda x, p: f"₹{x:,.0f}")
     )
 
     # 2. Drawdown
@@ -845,10 +845,10 @@ def plot_comprehensive_dashboard(
         )
         ax5.set_title("Cumulative P&L by Trade", fontsize=12, fontweight="bold")
         ax5.set_xlabel("Trade Number", fontsize=10)
-        ax5.set_ylabel("Cumulative P&L ($)", fontsize=10)
+        ax5.set_ylabel("Cumulative P&L (₹)", fontsize=10)
         ax5.grid(True, alpha=0.3)
         ax5.yaxis.set_major_formatter(
-            plt.FuncFormatter(lambda x, p: f"${x:,.0f}")
+            plt.FuncFormatter(lambda x, p: f"₹{x:,.0f}")
         )
 
     # 6. Monthly returns heatmap
@@ -871,7 +871,7 @@ def plot_comprehensive_dashboard(
                 cmap="RdYlGn",
                 center=0,
                 ax=ax6,
-                cbar_kws={"label": "P&L ($)"},
+                cbar_kws={"label": "P&L (₹)"},
             )
             ax6.set_title(
                 "Monthly P&L Heatmap", fontsize=12, fontweight="bold"
@@ -889,7 +889,7 @@ PERFORMANCE METRICS
 Total Trades: {metrics['num_trades']}
 Win Rate: {metrics['win_rate']:.1%}
 
-Total Return: ${metrics['total_return']:,.2f}
+Total Return: ₹{metrics['total_return']:,.2f}
 Return %: {metrics['total_return_pct']:.2f}%
 
 Sharpe Ratio: {metrics['sharpe']:.2f}
@@ -899,9 +899,9 @@ Calmar Ratio: {metrics['calmar']:.2f}
 Max Drawdown: {metrics['max_dd']:.2f}%
 Profit Factor: {metrics['profit_factor']:.2f}
 
-Avg Win: ${metrics['avg_win']:,.2f}
-Avg Loss: ${metrics['avg_loss']:,.2f}
-Expectancy: ${metrics['expectancy']:,.2f}
+Avg Win: ₹{metrics['avg_win']:,.2f}
+Avg Loss: ₹{metrics['avg_loss']:,.2f}
+Expectancy: ₹{metrics['expectancy']:,.2f}
 
 Max Loss Streak: {metrics['max_loss_streak']}
 """
@@ -1114,7 +1114,7 @@ def main():
 
     st.sidebar.markdown("### Backtest Settings")
     initial_capital = st.sidebar.number_input(
-        "Initial Capital ($)",
+        "Initial Capital (₹)",
         min_value=10000,
         max_value=1000000,
         value=100000,
@@ -1265,7 +1265,7 @@ def main():
                 with col1:
                     st.metric(
                         "Total Return",
-                        f"${metrics['total_return']:,.2f}",
+                        f"₹{metrics['total_return']:,.2f}",
                         delta=f"{metrics['total_return_pct']:.2f}%",
                     )
                     st.metric("Win Rate", f"{metrics['win_rate']:.1%}")
@@ -1277,7 +1277,7 @@ def main():
                     st.metric("Profit Factor", f"{metrics['profit_factor']:.2f}")
                 with col4:
                     st.metric("Total Trades", metrics["num_trades"])
-                    st.metric("Expectancy", f"${metrics['expectancy']:,.2f}")
+                    st.metric("Expectancy", f"₹{metrics['expectancy']:,.2f}")
 
                 # ----- Visualizations -----
                 st.markdown("### 📊 Performance Dashboard")
@@ -1305,17 +1305,17 @@ def main():
                 if not trades.empty:
                     trades_display = trades.copy()
                     trades_display["pnl"] = trades_display["pnl"].apply(
-                        lambda x: f"${x:,.2f}"
+                        lambda x: f"₹{x:,.2f}"
                     )
                     trades_display["pnl_pct"] = trades_display["pnl_pct"].apply(
                         lambda x: f"{x:.2f}%"
                     )
                     trades_display["entry_price"] = trades_display[
                         "entry_price"
-                    ].apply(lambda x: f"${x:,.2f}")
+                    ].apply(lambda x: f"₹{x:,.2f}")
                     trades_display["exit_price"] = trades_display[
                         "exit_price"
-                    ].apply(lambda x: f"${x:,.2f}")
+                    ].apply(lambda x: f"₹{x:,.2f}")
                     st.dataframe(trades_display, use_container_width=True)
                 else:
                     st.warning(
