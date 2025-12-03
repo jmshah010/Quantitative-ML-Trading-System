@@ -110,10 +110,11 @@ Includes:
 
 ```
 project/
-│── app.py                     # Main Streamlit application
-│── requirements.txt           # Dependencies
-│── sample_data.csv            # Example OHLCV dataset (optional)
-│── README.md                  # Documentation
+│── app.py                      # Main Streamlit application
+│── Quant Stratergy ML Model.py # Main Streamlit application
+│── requirements.txt            # Dependencies
+│── sample_data.csv             # Example OHLCV dataset (optional)
+│── README.md                   # Documentation
 ```
 
 ---
