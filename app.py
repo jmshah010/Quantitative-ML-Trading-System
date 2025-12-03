@@ -1,17 +1,20 @@
 # app.py
 # ==========================================
-# SUPER 3-CONFIRMATION INTRADAY MODEL
-# Gaussian Naive Bayes + EMA + VWAP + Price Action
-# Timeframe: 15-min
-# With metrics, plots, pickle, and Streamlit dashboard
+# Intraday 3-Confirmation ML Strategy (15-min, IST)
+# - Gaussian Naive Bayes with tunable var_smoothing
+# - Return threshold for labels (ignore tiny moves)
+# - 3-confirmation logic (ML + Trend + Price Action)
+# - Full backtest with trade log
+# - BUY / HOLD / SELL signals
+# - Streamlit dashboard
 # CSV format: datetime_ist,timestamp,open,high,low,close,volume
 # ==========================================
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import pickle
 import os
+import pickle
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
 import streamlit as st
 
@@ -27,7 +30,6 @@ from sklearn.preprocessing import StandardScaler
 
 def load_data_from_csv(file) -> pd.DataFrame:
     """
-    file: path string or file-like object from st.file_uploader
     Expects columns:
       - datetime_ist OR atetime_ist (typo safe)
       - timestamp
@@ -38,20 +40,19 @@ def load_data_from_csv(file) -> pd.DataFrame:
 
     # Handle datetime column name
     datetime_col = None
-    if 'datetime_ist' in df.columns:
-        datetime_col = 'datetime_ist'
-    elif 'atetime_ist' in df.columns:  # handle typo just in case
-        datetime_col = 'atetime_ist'
+    if "datetime_ist" in df.columns:
+        datetime_col = "datetime_ist"
+    elif "atetime_ist" in df.columns:  # typo safe
+        datetime_col = "atetime_ist"
 
     if datetime_col is None:
         raise ValueError("CSV must have a 'datetime_ist' (or 'atetime_ist') column.")
 
-    df[datetime_col] = pd.to_datetime(df[datetime_col])  # keeps +05:30 tz if present
+    df[datetime_col] = pd.to_datetime(df[datetime_col])
     df = df.sort_values(datetime_col).reset_index(drop=True)
     df.set_index(datetime_col, inplace=True)
     df.index.name = "datetime_ist"
 
-    # We ignore 'timestamp' for modeling; keep if you want
     return df
 
 
@@ -63,53 +64,64 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
 
     # EMA 20 & 50
-    d['ema20'] = d['close'].ewm(span=20, adjust=False).mean()
-    d['ema50'] = d['close'].ewm(span=50, adjust=False).mean()
+    d["ema20"] = d["close"].ewm(span=20, adjust=False).mean()
+    d["ema50"] = d["close"].ewm(span=50, adjust=False).mean()
 
-    # VWAP (cumulative – simple version)
-    cum_vol = d['volume'].cumsum()
-    cum_vp = (d['close'] * d['volume']).cumsum()
-    d['vwap'] = cum_vp / cum_vol.replace(0, np.nan)
+    # VWAP (cumulative)
+    cum_vol = d["volume"].cumsum()
+    cum_vp = (d["close"] * d["volume"]).cumsum()
+    d["vwap"] = cum_vp / cum_vol.replace(0, np.nan)
 
     # ATR(14)
-    high_low = d['high'] - d['low']
-    high_close_prev = (d['high'] - d['close'].shift(1)).abs()
-    low_close_prev = (d['low'] - d['close'].shift(1)).abs()
+    high_low = d["high"] - d["low"]
+    high_close_prev = (d["high"] - d["close"].shift(1)).abs()
+    low_close_prev = (d["low"] - d["close"].shift(1)).abs()
     tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
-    d['atr14'] = tr.rolling(window=14).mean()
+    d["atr14"] = tr.rolling(window=14).mean()
 
     # RSI(14)
-    delta = d['close'].diff()
+    delta = d["close"].diff()
     gain = np.where(delta > 0, delta, 0.0)
     loss = np.where(delta < 0, -delta, 0.0)
     roll_up = pd.Series(gain, index=d.index).rolling(14).mean()
     roll_down = pd.Series(loss, index=d.index).rolling(14).mean()
     rs = roll_up / roll_down.replace(0, np.nan)
-    d['rsi14'] = 100.0 - (100.0 / (1.0 + rs))
+    d["rsi14"] = 100.0 - (100.0 / (1.0 + rs))
 
     # Volume features
-    d['vol_ma20'] = d['volume'].rolling(20).mean()
-    d['vol_ratio'] = d['volume'] / d['vol_ma20']
+    d["vol_ma20"] = d["volume"].rolling(20).mean()
+    d["vol_ratio"] = d["volume"] / d["vol_ma20"]
 
-    # Simple swing levels
-    d['roll_max_20'] = d['high'].rolling(20).max()
-    d['roll_min_20'] = d['low'].rolling(20).min()
+    # Swing levels
+    d["roll_max_20"] = d["high"].rolling(20).max()
+    d["roll_min_20"] = d["low"].rolling(20).min()
 
-    # Candlestick body / range
-    d['body'] = d['close'] - d['open']
-    d['range'] = d['high'] - d['low']
+    # Candle features
+    d["body"] = d["close"] - d["open"]
+    d["range"] = d["high"] - d["low"]
 
     return d
 
 
 # ------------------------------------------
-# 3. LABELS FOR ML (direction)
+# 3. LABELS (fine-tuned with return threshold)
 # ------------------------------------------
 
-def create_labels(df: pd.DataFrame, horizon: int = 1) -> pd.DataFrame:
+def create_labels(df: pd.DataFrame, horizon: int = 1,
+                  return_threshold_pct: float = 0.2) -> pd.DataFrame:
+    """
+    horizon: how many bars ahead
+    return_threshold_pct: minimum |future move| in % to label as up/down.
+      Example: 0.2 -> ignore moves between -0.2% and +0.2%
+    """
     d = df.copy()
-    d['future_close'] = d['close'].shift(-horizon)
-    d['direction'] = np.where(d['future_close'] > d['close'], 1, 0)
+    d["future_close"] = d["close"].shift(-horizon)
+    d["future_ret_pct"] = (d["future_close"] - d["close"]) / d["close"] * 100.0
+
+    up = d["future_ret_pct"] > return_threshold_pct
+    down = d["future_ret_pct"] < -return_threshold_pct
+
+    d["direction"] = np.where(up, 1, np.where(down, 0, np.nan))
     return d
 
 
@@ -119,21 +131,21 @@ def create_labels(df: pd.DataFrame, horizon: int = 1) -> pd.DataFrame:
 
 def build_ml_dataset(df: pd.DataFrame):
     feature_cols = [
-        'close', 'ema20', 'ema50', 'vwap',
-        'atr14', 'rsi14', 'vol_ratio',
-        'body', 'range', 'roll_max_20', 'roll_min_20'
+        "close", "ema20", "ema50", "vwap",
+        "atr14", "rsi14", "vol_ratio",
+        "body", "range", "roll_max_20", "roll_min_20"
     ]
-    d = df.dropna().copy()
+    d = df.dropna(subset=feature_cols + ["direction"]).copy()
     X = d[feature_cols].values
-    y = d['direction'].values
+    y = d["direction"].values.astype(int)
     return d, X, y, feature_cols
 
 
 # ------------------------------------------
-# 5. TRAIN GAUSSIAN NB
+# 5. TRAIN GAUSSIAN NB (with var_smoothing)
 # ------------------------------------------
 
-def train_gnb(X, y, test_size=0.2):
+def train_gnb(X, y, test_size=0.2, var_smoothing=1e-9):
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, shuffle=False
     )
@@ -142,7 +154,7 @@ def train_gnb(X, y, test_size=0.2):
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    model = GaussianNB()
+    model = GaussianNB(var_smoothing=var_smoothing)
     model.fit(X_train_scaled, y_train)
 
     y_pred = model.predict(X_test_scaled)
@@ -162,10 +174,10 @@ def apply_model(df_ml: pd.DataFrame, model, scaler, feature_cols):
     X_all = d[feature_cols].values
     X_all_scaled = scaler.transform(X_all)
     probs = model.predict_proba(X_all_scaled)
-    d['prob_down'] = probs[:, 0]
-    d['prob_up'] = probs[:, 1]
-    d['ml_signal'] = np.where(d['prob_up'] >= d['prob_down'], 1, 0)
-    d['ml_confidence'] = d[['prob_up', 'prob_down']].max(axis=1)
+    d["prob_down"] = probs[:, 0]
+    d["prob_up"] = probs[:, 1]
+    d["ml_signal"] = np.where(d["prob_up"] >= d["prob_down"], 1, 0)
+    d["ml_confidence"] = d[["prob_up", "prob_down"]].max(axis=1)
     return d
 
 
@@ -175,18 +187,19 @@ def apply_model(df_ml: pd.DataFrame, model, scaler, feature_cols):
 
 def is_bullish_engulfing(curr: pd.Series, prev: pd.Series) -> bool:
     return (
-        (prev['close'] < prev['open']) and
-        (curr['close'] > curr['open']) and
-        (curr['close'] >= prev['open']) and
-        (curr['open'] <= prev['close'])
+        (prev["close"] < prev["open"]) and
+        (curr["close"] > curr["open"]) and
+        (curr["close"] >= prev["open"]) and
+        (curr["open"] <= prev["close"])
     )
+
 
 def is_bearish_engulfing(curr: pd.Series, prev: pd.Series) -> bool:
     return (
-        (prev['close'] > prev['open']) and
-        (curr['close'] < curr['open']) and
-        (curr['close'] <= prev['open']) and
-        (curr['open'] >= prev['close'])
+        (prev["close"] > prev["open"]) and
+        (curr["close"] < curr["open"]) and
+        (curr["close"] <= prev["open"]) and
+        (curr["open"] >= prev["close"])
     )
 
 
@@ -198,28 +211,27 @@ def generate_signals(d: pd.DataFrame,
                      ml_conf_threshold: float = 0.70,
                      vol_threshold: float = 1.0) -> pd.DataFrame:
     d = d.copy()
-    d['signal'] = 0
+    d["signal"] = 0  # 1=long entry, -1=short entry, 0=no entry
 
-    # Previous swing levels
-    d['prev_max_20'] = d['roll_max_20'].shift(1)
-    d['prev_min_20'] = d['roll_min_20'].shift(1)
+    d["prev_max_20"] = d["roll_max_20"].shift(1)
+    d["prev_min_20"] = d["roll_min_20"].shift(1)
 
     for i in range(1, len(d)):
         idx = d.index[i]
         row = d.iloc[i]
         prev = d.iloc[i - 1]
 
-        close = row['close']
-        ema20 = row['ema20']
-        ema50 = row['ema50']
-        vwap = row['vwap']
-        ml_signal = row['ml_signal']
-        ml_conf = row['ml_confidence']
-        vol_ratio = row['vol_ratio']
-        high = row['high']
-        low = row['low']
-        prev_max_20 = row['prev_max_20']
-        prev_min_20 = row['prev_min_20']
+        close = row["close"]
+        ema20 = row["ema20"]
+        ema50 = row["ema50"]
+        vwap = row["vwap"]
+        ml_signal = row["ml_signal"]
+        ml_conf = row["ml_confidence"]
+        vol_ratio = row["vol_ratio"]
+        high = row["high"]
+        low = row["low"]
+        prev_max_20 = row["prev_max_20"]
+        prev_min_20 = row["prev_min_20"]
 
         # 1) ML confirmation
         long_ml_ok = (ml_signal == 1 and ml_conf >= ml_conf_threshold)
@@ -247,71 +259,101 @@ def generate_signals(d: pd.DataFrame,
         elif short_ml_ok and short_trend_ok and short_pa_ok:
             sig = -1
 
-        d.at[idx, 'signal'] = sig
+        d.at[idx, "signal"] = sig
 
     return d
 
 
 # ------------------------------------------
-# 9. BACKTEST ENGINE
+# 9. BACKTEST WITH TRADE LOG & BUY/HOLD/SELL
 # ------------------------------------------
 
 def backtest(df: pd.DataFrame,
              sl_mult: float = 1.0,
              tp_mult: float = 1.5,
-             risk_per_trade: float = 1.0) -> pd.DataFrame:
+             risk_per_trade: float = 1.0):
+    """
+    Returns:
+      results: per-bar dataframe with position, pnl, cum_pnl, action(BUY/HOLD/SELL/FLAT)
+      trades:  per-trade dataframe with entry/exit, probs, R, cum_pnl
+    """
     d = df.copy()
-    d['position'] = 0
-    d['pnl'] = 0.0
-    d['cum_pnl'] = 0.0
+    d["position"] = 0
+    d["pnl"] = 0.0
+    d["cum_pnl"] = 0.0
+    d["action"] = "FLAT"  # BUY / SELL / HOLD / FLAT
 
     in_trade = False
     direction = 0
     entry_price = 0.0
     stop_price = 0.0
     target_price = 0.0
+    entry_time = None
+    entry_prob_up = 0.0
+    entry_prob_down = 0.0
+    entry_conf = 0.0
+
+    trades = []
 
     for i in range(1, len(d)):
         idx = d.index[i]
         row = d.iloc[i]
         prev = d.iloc[i - 1]
 
+        # default state
+        d.at[idx, "action"] = "FLAT"
+
         if not in_trade:
-            sig = prev['signal']
-            atr = prev['atr14']
+            sig = prev["signal"]
+            atr = prev["atr14"]
 
             if sig == 1 and not np.isnan(atr):
+                # LONG entry
                 direction = 1
-                entry_price = row['close']
+                entry_price = row["close"]
                 sl = atr * sl_mult
                 tp = atr * tp_mult
                 stop_price = entry_price - sl
                 target_price = entry_price + tp
                 in_trade = True
-                d.at[idx, 'position'] = 1
+                entry_time = idx
+                entry_prob_up = row["prob_up"]
+                entry_prob_down = row["prob_down"]
+                entry_conf = row["ml_confidence"]
+                d.at[idx, "position"] = 1
+                d.at[idx, "action"] = "BUY"
 
             elif sig == -1 and not np.isnan(atr):
+                # SHORT entry
                 direction = -1
-                entry_price = row['close']
+                entry_price = row["close"]
                 sl = atr * sl_mult
                 tp = atr * tp_mult
                 stop_price = entry_price + sl
                 target_price = entry_price - tp
                 in_trade = True
-                d.at[idx, 'position'] = -1
+                entry_time = idx
+                entry_prob_up = row["prob_up"]
+                entry_prob_down = row["prob_down"]
+                entry_conf = row["ml_confidence"]
+                d.at[idx, "position"] = -1
+                d.at[idx, "action"] = "SELL"  # opening short
 
         else:
-            high = row['high']
-            low = row['low']
+            high = row["high"]
+            low = row["low"]
             exit_price = None
             trade_pnl = 0.0
+
+            # while in trade, default action is HOLD
+            d.at[idx, "position"] = direction
+            d.at[idx, "action"] = "HOLD"
 
             if direction == 1:
                 if low <= stop_price:
                     exit_price = stop_price
                 elif high >= target_price:
                     exit_price = target_price
-
             elif direction == -1:
                 if high >= stop_price:
                     exit_price = stop_price
@@ -321,36 +363,53 @@ def backtest(df: pd.DataFrame,
             if exit_price is not None:
                 if direction == 1:
                     R = (exit_price - entry_price) / (stop_price - entry_price)
+                    exit_action = "SELL"  # closing long
                 else:
                     R = (entry_price - exit_price) / (entry_price - stop_price)
+                    exit_action = "BUY"   # buy to cover
 
                 trade_pnl = R * risk_per_trade
-                d.at[idx, 'pnl'] = trade_pnl
+                d.at[idx, "pnl"] = trade_pnl
+                d.at[idx, "action"] = exit_action
+                d.at[idx, "position"] = 0
+
+                # store trade
+                trades.append({
+                    "side": "LONG" if direction == 1 else "SHORT",
+                    "entry_time": entry_time,
+                    "exit_time": idx,
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "R": trade_pnl,
+                    "entry_prob_up": float(entry_prob_up),
+                    "entry_prob_down": float(entry_prob_down),
+                    "entry_ml_confidence": float(entry_conf),
+                })
 
                 in_trade = False
                 direction = 0
                 entry_price = 0.0
                 stop_price = 0.0
                 target_price = 0.0
-                d.at[idx, 'position'] = 0
-            else:
-                d.at[idx, 'position'] = direction
+                entry_time = None
 
+        # cumulative PnL
         if i > 0:
-            d.at[idx, 'cum_pnl'] = d['pnl'].iloc[:i+1].sum()
+            d.at[idx, "cum_pnl"] = d["pnl"].iloc[: i + 1].sum()
 
-    return d
+    trades_df = pd.DataFrame(trades)
+    if not trades_df.empty:
+        trades_df["cum_pnl"] = trades_df["R"].cumsum()
+
+    return d, trades_df
 
 
 # ------------------------------------------
 # 10. METRICS
 # ------------------------------------------
 
-def compute_metrics(results: pd.DataFrame):
-    trades = results[results['pnl'] != 0]
-    num_trades = len(trades)
-
-    if num_trades == 0:
+def compute_metrics(trades: pd.DataFrame):
+    if trades is None or trades.empty:
         return {
             "num_trades": 0,
             "win_rate": np.nan,
@@ -358,23 +417,24 @@ def compute_metrics(results: pd.DataFrame):
             "avg_win_R": np.nan,
             "avg_loss_R": np.nan,
             "max_dd": np.nan,
-            "sharpe": np.nan
+            "sharpe": np.nan,
         }
 
-    winners = trades[trades['pnl'] > 0]
-    losers = trades[trades['pnl'] < 0]
+    num_trades = len(trades)
+    winners = trades[trades["R"] > 0]
+    losers = trades[trades["R"] < 0]
 
     win_rate = len(winners) / num_trades
-    avg_R = trades['pnl'].mean()
-    avg_win_R = winners['pnl'].mean() if len(winners) > 0 else 0
-    avg_loss_R = losers['pnl'].mean() if len(losers) > 0 else 0
+    avg_R = trades["R"].mean()
+    avg_win_R = winners["R"].mean() if len(winners) > 0 else 0.0
+    avg_loss_R = losers["R"].mean() if len(losers) > 0 else 0.0
 
-    equity = results['cum_pnl']
+    equity = trades["cum_pnl"]
     peak = equity.cummax()
     drawdown = equity - peak
-    max_dd = drawdown.min()
+    max_dd = drawdown.min() if len(drawdown) > 0 else 0.0
 
-    rets = trades['pnl']
+    rets = trades["R"]
     if rets.std() > 0:
         sharpe = rets.mean() / rets.std() * np.sqrt(len(rets))
     else:
@@ -387,7 +447,7 @@ def compute_metrics(results: pd.DataFrame):
         "avg_win_R": avg_win_R,
         "avg_loss_R": avg_loss_R,
         "max_dd": max_dd,
-        "sharpe": sharpe
+        "sharpe": sharpe,
     }
 
 
@@ -396,7 +456,7 @@ def compute_metrics(results: pd.DataFrame):
 # ------------------------------------------
 
 def plot_equity_and_drawdown(results: pd.DataFrame):
-    equity = results['cum_pnl']
+    equity = results["cum_pnl"]
     peak = equity.cummax()
     drawdown = equity - peak
 
@@ -431,8 +491,13 @@ def save_model_artifacts(model, scaler, feature_cols):
     with open(FEATURE_PATH, "wb") as f:
         pickle.dump(feature_cols, f)
 
+
 def load_model_artifacts():
-    if not (os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH) and os.path.exists(FEATURE_PATH)):
+    if not (
+        os.path.exists(MODEL_PATH)
+        and os.path.exists(SCALER_PATH)
+        and os.path.exists(FEATURE_PATH)
+    ):
         return None, None, None
     with open(MODEL_PATH, "rb") as f:
         model = pickle.load(f)
@@ -462,22 +527,31 @@ def predict_realtime_signal(df_raw: pd.DataFrame,
     X_all = d[feature_cols].values
     X_all_scaled = scaler.transform(X_all)
     probs = model.predict_proba(X_all_scaled)
-    d['prob_down'] = probs[:, 0]
-    d['prob_up'] = probs[:, 1]
-    d['ml_signal'] = np.where(d['prob_up'] >= d['prob_down'], 1, 0)
-    d['ml_confidence'] = d[['prob_up', 'prob_down']].max(axis=1)
+    d["prob_down"] = probs[:, 0]
+    d["prob_up"] = probs[:, 1]
+    d["ml_signal"] = np.where(d["prob_up"] >= d["prob_down"], 1, 0)
+    d["ml_confidence"] = d[["prob_up", "prob_down"]].max(axis=1)
 
     d = generate_signals(d, ml_conf_threshold=ml_conf_threshold,
                          vol_threshold=vol_threshold)
 
     last = d.iloc[-1]
+    # Map to BUY/HOLD/SELL suggestion
+    if last["signal"] == 1:
+        suggestion = "BUY"
+    elif last["signal"] == -1:
+        suggestion = "SELL"
+    else:
+        suggestion = "NO TRADE"
+
     return {
-        "datetime": last.name,
-        "prob_up": float(last['prob_up']),
-        "prob_down": float(last['prob_down']),
-        "ml_signal": int(last['ml_signal']),       # 1 = UP bias, 0 = DOWN bias
-        "ml_confidence": float(last['ml_confidence']),
-        "final_signal": int(last['signal'])        # 1 = BUY, -1 = SELL, 0 = NO TRADE
+        "datetime_ist": str(last.name),
+        "prob_up": float(last["prob_up"]),
+        "prob_down": float(last["prob_down"]),
+        "ml_signal": int(last["ml_signal"]),           # 1=UP,0=DOWN
+        "ml_confidence": float(last["ml_confidence"]),
+        "final_signal": int(last["signal"]),           # 1=BUY,-1=SELL,0=NO TRADE
+        "suggested_action": suggestion,
     }
 
 
@@ -489,18 +563,36 @@ def main():
     st.title("📊 Intraday 3-Confirmation ML Strategy (15-min, IST)")
 
     st.sidebar.header("⚙️ Parameters")
-    test_size = st.sidebar.slider("Test size (fraction for test set)", 0.1, 0.4, 0.2, 0.05)
-    ml_conf_threshold = st.sidebar.slider("ML Confidence Threshold", 0.5, 0.95, 0.70, 0.01)
-    vol_threshold = st.sidebar.slider("Volume Ratio Threshold", 0.5, 2.0, 1.0, 0.1)
-    sl_mult = st.sidebar.slider("SL ATR Multiplier", 0.5, 3.0, 1.0, 0.1)
-    tp_mult = st.sidebar.slider("TP ATR Multiplier", 0.5, 4.0, 1.5, 0.1)
+
+    test_size = st.sidebar.slider(
+        "Test size (fraction for test set)", 0.1, 0.4, 0.2, 0.05
+    )
+    ml_conf_threshold = st.sidebar.slider(
+        "ML Confidence Threshold", 0.5, 0.95, 0.70, 0.01
+    )
+    vol_threshold = st.sidebar.slider(
+        "Volume Ratio Threshold", 0.5, 2.0, 1.0, 0.1
+    )
+    sl_mult = st.sidebar.slider(
+        "SL ATR Multiplier", 0.5, 3.0, 1.0, 0.1
+    )
+    tp_mult = st.sidebar.slider(
+        "TP ATR Multiplier", 0.5, 4.0, 1.5, 0.1
+    )
+    return_threshold_pct = st.sidebar.slider(
+        "Min future move for label (%)", 0.0, 1.0, 0.2, 0.05
+    )
+    var_smoothing_log10 = st.sidebar.slider(
+        "GNB var_smoothing (10^x)", -12.0, -6.0, -9.0, 0.5
+    )
+    var_smoothing = 10 ** var_smoothing_log10
 
     st.markdown("### 🧪 1. Train Model & Backtest")
 
     train_file = st.file_uploader(
         "Upload historical 15-min CSV (datetime_ist,timestamp,open,high,low,close,volume)",
         type=["csv"],
-        key="train"
+        key="train",
     )
 
     if train_file is not None:
@@ -510,42 +602,64 @@ def main():
                 st.write("Data preview:", df.head())
 
                 df = add_indicators(df)
-                df = create_labels(df, horizon=1)
+                df = create_labels(df, horizon=1,
+                                   return_threshold_pct=return_threshold_pct)
                 df_ml, X, y, feature_cols = build_ml_dataset(df)
 
-                model, scaler, report, acc = train_gnb(X, y, test_size=test_size)
-                st.success(f"Model trained. Test Accuracy: {acc:.3f}")
+                if len(np.unique(y)) < 2:
+                    st.error("Not enough labelled UP/DOWN samples after applying return threshold. Lower the threshold.")
+                else:
+                    model, scaler, report, acc = train_gnb(
+                        X, y,
+                        test_size=test_size,
+                        var_smoothing=var_smoothing
+                    )
+                    st.success(f"Model trained. Test Accuracy: {acc:.3f}")
 
-                st.subheader("Classification Report (Test)")
-                st.json(report)
+                    st.subheader("Classification Report (Test)")
+                    st.json(report)
 
-                df_ml = apply_model(df_ml, model, scaler, feature_cols)
-                df_signals = generate_signals(df_ml,
-                                              ml_conf_threshold=ml_conf_threshold,
-                                              vol_threshold=vol_threshold)
-                results = backtest(df_signals,
-                                   sl_mult=sl_mult,
-                                   tp_mult=tp_mult,
-                                   risk_per_trade=1.0)
+                    df_ml = apply_model(df_ml, model, scaler, feature_cols)
+                    df_signals = generate_signals(
+                        df_ml,
+                        ml_conf_threshold=ml_conf_threshold,
+                        vol_threshold=vol_threshold,
+                    )
+                    results, trades = backtest(
+                        df_signals,
+                        sl_mult=sl_mult,
+                        tp_mult=tp_mult,
+                        risk_per_trade=1.0,
+                    )
 
-                metrics = compute_metrics(results)
+                    metrics = compute_metrics(trades)
 
-                st.subheader("📈 Strategy Metrics")
-                st.write(f"Number of trades: {metrics['num_trades']}")
-                st.write(f"Win rate: {metrics['win_rate'] * 100 if not np.isnan(metrics['win_rate']) else np.nan:.2f}%")
-                st.write(f"Average R per trade: {metrics['avg_R']:.3f}")
-                st.write(f"Average Win (R): {metrics['avg_win_R']:.3f}")
-                st.write(f"Average Loss (R): {metrics['avg_loss_R']:.3f}")
-                st.write(f"Max Drawdown (R): {metrics['max_dd']:.3f}")
-                st.write(f"Sharpe (per trade R): {metrics['sharpe']:.3f}")
+                    st.subheader("📈 Strategy Metrics (Based on Trades)")
+                    st.write(f"Number of trades: {metrics['num_trades']}")
+                    st.write(
+                        f"Win rate: {metrics['win_rate'] * 100 if not np.isnan(metrics['win_rate']) else np.nan:.2f}%"
+                    )
+                    st.write(f"Average R per trade: {metrics['avg_R']:.3f}")
+                    st.write(f"Average Win (R): {metrics['avg_win_R']:.3f}")
+                    st.write(f"Average Loss (R): {metrics['avg_loss_R']:.3f}")
+                    st.write(f"Max Drawdown (R): {metrics['max_dd']:.3f}")
+                    st.write(f"Sharpe (per trade R): {metrics['sharpe']:.3f}")
 
-                st.subheader("📉 Equity Curve & Drawdown")
-                fig = plot_equity_and_drawdown(results)
-                st.pyplot(fig)
+                    st.subheader("📉 Equity Curve & Drawdown")
+                    fig = plot_equity_and_drawdown(results)
+                    st.pyplot(fig)
 
-                # Save model
-                save_model_artifacts(model, scaler, feature_cols)
-                st.success("✅ Model, scaler, and feature list saved as pickle files in current directory.")
+                    st.subheader("🧾 Trade Log (with probabilities & PnL)")
+                    if trades is None or trades.empty:
+                        st.write("No completed trades.")
+                    else:
+                        st.dataframe(trades)
+
+                    # Save model
+                    save_model_artifacts(model, scaler, feature_cols)
+                    st.success(
+                        "✅ Model, scaler, and feature list saved as pickle files in current directory."
+                    )
             except Exception as e:
                 st.error(f"Error during training/backtest: {e}")
 
@@ -559,7 +673,7 @@ def main():
         new_file = st.file_uploader(
             "Upload NEW 15-min CSV (same format) for testing / latest signal",
             type=["csv"],
-            key="new"
+            key="new",
         )
 
         if new_file is not None:
@@ -567,25 +681,33 @@ def main():
                 df_new = load_data_from_csv(new_file)
                 st.write("New data preview:", df_new.head())
 
-                # For full backtest on new data using saved model:
                 df_new_ind = add_indicators(df_new)
-                df_new_ind = create_labels(df_new_ind, horizon=1)  # labels not used for live but fine
+                df_new_ind = create_labels(
+                    df_new_ind, horizon=1,
+                    return_threshold_pct=return_threshold_pct
+                )
                 df_ml_new, _, _, _ = build_ml_dataset(df_new_ind)
 
                 df_ml_new = apply_model(df_ml_new, model, scaler, feature_cols)
-                df_signals_new = generate_signals(df_ml_new,
-                                                  ml_conf_threshold=ml_conf_threshold,
-                                                  vol_threshold=vol_threshold)
-                results_new = backtest(df_signals_new,
-                                       sl_mult=sl_mult,
-                                       tp_mult=tp_mult,
-                                       risk_per_trade=1.0)
+                df_signals_new = generate_signals(
+                    df_ml_new,
+                    ml_conf_threshold=ml_conf_threshold,
+                    vol_threshold=vol_threshold,
+                )
+                results_new, trades_new = backtest(
+                    df_signals_new,
+                    sl_mult=sl_mult,
+                    tp_mult=tp_mult,
+                    risk_per_trade=1.0,
+                )
 
-                metrics_new = compute_metrics(results_new)
+                metrics_new = compute_metrics(trades_new)
 
                 st.subheader("📈 Metrics on New Data (Using Saved Model)")
                 st.write(f"Number of trades: {metrics_new['num_trades']}")
-                st.write(f"Win rate: {metrics_new['win_rate'] * 100 if not np.isnan(metrics_new['win_rate']) else np.nan:.2f}%")
+                st.write(
+                    f"Win rate: {metrics_new['win_rate'] * 100 if not np.isnan(metrics_new['win_rate']) else np.nan:.2f}%"
+                )
                 st.write(f"Average R per trade: {metrics_new['avg_R']:.3f}")
                 st.write(f"Average Win (R): {metrics_new['avg_win_R']:.3f}")
                 st.write(f"Average Loss (R): {metrics_new['avg_loss_R']:.3f}")
@@ -595,22 +717,25 @@ def main():
                 fig2 = plot_equity_and_drawdown(results_new)
                 st.pyplot(fig2)
 
-                # "Realtime" style last candle signal
+                st.subheader("🧾 Trade Log on New Data")
+                if trades_new is None or trades_new.empty:
+                    st.write("No completed trades.")
+                else:
+                    st.dataframe(trades_new)
+
                 st.subheader("🚨 Latest Candle Signal (Realtime Style)")
-                rt_info = predict_realtime_signal(df_new, model, scaler, feature_cols,
-                                                  ml_conf_threshold=ml_conf_threshold,
-                                                  vol_threshold=vol_threshold)
+                rt_info = predict_realtime_signal(
+                    df_new,
+                    model,
+                    scaler,
+                    feature_cols,
+                    ml_conf_threshold=ml_conf_threshold,
+                    vol_threshold=vol_threshold,
+                )
                 if rt_info is None:
                     st.write("Not enough data to compute signal.")
                 else:
-                    st.json({
-                        "datetime_ist": str(rt_info["datetime"]),
-                        "prob_up": rt_info["prob_up"],
-                        "prob_down": rt_info["prob_down"],
-                        "ml_signal (1=UP,0=DOWN)": rt_info["ml_signal"],
-                        "ml_confidence": rt_info["ml_confidence"],
-                        "final_signal (1=BUY,-1=SELL,0=NO TRADE)": rt_info["final_signal"],
-                    })
+                    st.json(rt_info)
 
             except Exception as e:
                 st.error(f"Error using saved model on new data: {e}")
